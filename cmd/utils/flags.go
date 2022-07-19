@@ -11,11 +11,14 @@ import (
 // CMDFlags are the flags used by the cmd
 // TODO: improve flags.
 type CMDFlags struct {
-	KubeConfig  string
-	Development bool
-	Debug       bool
-	ListenAddr  string
-	MetricsPath string
+	KubeConfig           string
+	Development          bool
+	Debug                bool
+	ListenAddr           string
+	ProbeAddr            string
+	MetricsPath          string
+	OperatorNameSpace    string
+	EnableLeaderElection bool
 }
 
 // Init initializes and parse the flags
@@ -26,7 +29,10 @@ func (c *CMDFlags) Init() {
 	flag.BoolVar(&c.Development, "development", false, "development flag will allow to run the operator outside a kubernetes cluster")
 	flag.BoolVar(&c.Debug, "debug", false, "enable debug mode")
 	flag.StringVar(&c.ListenAddr, "listen-address", ":9710", "Address to listen on for metrics.")
+	flag.StringVar(&c.ProbeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&c.MetricsPath, "metrics-path", "/metrics", "Path to serve the metrics.")
+	flag.BoolVar(&c.EnableLeaderElection, "leader-elect-enabled", true, "Enable leader election for redis-operator.")
+	flag.StringVar(&c.OperatorNameSpace, "namespace", "redis", "Namespace to run redis-operator.")
 
 	// Parse flags
 	flag.Parse()
@@ -35,7 +41,9 @@ func (c *CMDFlags) Init() {
 // ToRedisOperatorConfig convert the flags to redisfailover config
 func (c *CMDFlags) ToRedisOperatorConfig() redisfailover.Config {
 	return redisfailover.Config{
-		ListenAddress: c.ListenAddr,
-		MetricsPath:   c.MetricsPath,
+		ListenAddress:        c.ListenAddr,
+		MetricsPath:          c.MetricsPath,
+		OperatorNameSpace:    c.OperatorNameSpace,
+		EnableLeaderElection: c.EnableLeaderElection,
 	}
 }

@@ -20,10 +20,16 @@ import (
 )
 
 const (
+	// 阿里云Redis默认使用RDB备份方式: https://help.aliyun.com/document_detail/211003.html
 	redisConfigurationVolumeName = "redis-config"
 	// Template used to build the Redis configuration
 	redisConfigTemplate = `slaveof 127.0.0.1 6379
 tcp-keepalive 60
+protected-mode no
+appendonly no
+appendfsync no
+databases 64
+tcp-backlog 2000
 save 900 1
 save 300 10
 {{- range .Spec.Redis.CustomCommandRenames}}
@@ -32,6 +38,7 @@ rename-command "{{.From}}" "{{.To}}"
 `
 	redisShutdownConfigurationVolumeName = "redis-shutdown-config"
 	redisReadinessVolumeName             = "redis-readiness-config"
+	redisHostTimeVolumeName              = "host-time"
 	redisStorageVolumeName               = "redis-data"
 
 	graceTime = 30
@@ -67,8 +74,43 @@ func generateSentinelService(rf *redisfailoverv1.RedisFailover, labels map[strin
 	}
 }
 
-func generateRedisService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) *corev1.Service {
-	name := GetRedisName(rf)
+func generateRedisMasterLabels() map[string]string {
+	return map[string]string{
+		redisRoleLabelKey: redisRoleLabelMaster,
+	}
+}
+
+func generateRedisMasterService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) *corev1.Service {
+	name := GetRedisMasterName(rf)
+	namespace := rf.Namespace
+
+	sentinelTargetPort := intstr.FromInt(6379)
+	selectorLabels := util.MergeLabels(generateSelectorLabels(redisRoleName, rf.Name), generateRedisMasterLabels())
+	labels = util.MergeLabels(labels, selectorLabels)
+
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            name,
+			Namespace:       namespace,
+			Labels:          labels,
+			OwnerReferences: ownerRefs,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: selectorLabels,
+			Ports: []corev1.ServicePort{
+				{
+					Name:       "redis",
+					Port:       16379,
+					TargetPort: sentinelTargetPort,
+					Protocol:   "TCP",
+				},
+			},
+		},
+	}
+}
+
+func generateRedisExporterService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) *corev1.Service {
+	name := GetRedisExporterName(rf)
 	namespace := rf.Namespace
 
 	selectorLabels := generateSelectorLabels(redisRoleName, rf.Name)
@@ -249,9 +291,15 @@ func generateRedisStatefulSet(rf *redisfailoverv1.RedisFailover, labels map[stri
 	redisCommand := getRedisCommand(rf)
 	selectorLabels := generateSelectorLabels(redisRoleName, rf.Name)
 	labels = util.MergeLabels(labels, selectorLabels)
+	labels = util.MergeLabels(labels, generateRedisDefaultRoleLabel())
+
 	volumeMounts := getRedisVolumeMounts(rf)
 	volumes := getRedisVolumes(rf)
 	terminationGracePeriodSeconds := getTerminationGracePeriodSeconds(rf)
+
+	setSysctlPrivileged := true
+	setSysctlRunAsNonRoot := false
+	var setSysctlRunUser int64 = 0
 
 	ss := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -276,22 +324,40 @@ func generateRedisStatefulSet(rf *redisfailoverv1.RedisFailover, labels map[stri
 					Annotations: rf.Spec.Redis.PodAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					Affinity:                      getAffinity(rf.Spec.Redis.Affinity, labels),
-					Tolerations:                   rf.Spec.Redis.Tolerations,
-					NodeSelector:                  rf.Spec.Redis.NodeSelector,
-					SecurityContext:               getSecurityContext(rf.Spec.Redis.SecurityContext),
+					Affinity:     getAffinity(rf.Spec.Redis.Affinity, labels),
+					Tolerations:  rf.Spec.Redis.Tolerations,
+					NodeSelector: rf.Spec.Redis.NodeSelector,
+					//SecurityContext:               getSecurityContext(rf.Spec.Redis.SecurityContext),
 					HostNetwork:                   rf.Spec.Redis.HostNetwork,
 					DNSPolicy:                     getDnsPolicy(rf.Spec.Redis.DNSPolicy),
 					ImagePullSecrets:              rf.Spec.Redis.ImagePullSecrets,
 					PriorityClassName:             rf.Spec.Redis.PriorityClassName,
 					ServiceAccountName:            rf.Spec.Redis.ServiceAccountName,
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
+					InitContainers: []corev1.Container{
+						{
+							Name:  "init-redis",
+							Image: "busybox",
+							// 关闭 THP 需要挂载宿主机的 /sys 目录, 风险有点大, 目前看只会影响写性能, 先不关闭了
+							Command: []string{
+								"sh",
+								"-c",
+								"sysctl -w net.core.somaxconn=65535 && mkdir -p /data && chown -R 1000:1000 /data && chmod -R a+rw /data",
+							},
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged:   &setSysctlPrivileged,
+								RunAsNonRoot: &setSysctlRunAsNonRoot,
+								RunAsUser:    &setSysctlRunUser,
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "redis",
 							Image:           rf.Spec.Redis.Image,
 							ImagePullPolicy: pullPolicy(rf.Spec.Redis.ImagePullPolicy),
-							SecurityContext: getContainerSecurityContext(rf.Spec.Redis.ContainerSecurityContext),
+							//SecurityContext: getContainerSecurityContext(rf.Spec.Redis.ContainerSecurityContext),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "redis",
@@ -339,6 +405,10 @@ func generateRedisStatefulSet(rf *redisfailoverv1.RedisFailover, labels map[stri
 				},
 			},
 		},
+	}
+
+	if rf.Spec.Redis.ContainerSecurityContext != nil {
+		ss.Spec.Template.Spec.Containers[0].SecurityContext = rf.Spec.Redis.ContainerSecurityContext
 	}
 
 	if rf.Spec.Redis.Storage.PersistentVolumeClaim != nil {
@@ -395,6 +465,10 @@ func generateSentinelDeployment(rf *redisfailoverv1.RedisFailover, labels map[st
 	sentinelCommand := getSentinelCommand(rf)
 	selectorLabels := generateSelectorLabels(sentinelRoleName, rf.Name)
 	labels = util.MergeLabels(labels, selectorLabels)
+
+	setSysctlPrivileged := true
+	setSysctlRunAsNonRoot := false
+	var setSysctlRunUser int64 = 0
 
 	sd := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -455,6 +529,21 @@ func generateSentinelDeployment(rf *redisfailoverv1.RedisFailover, labels map[st
 								},
 							},
 						},
+						{
+							Name:  "init-sentinel",
+							Image: "busybox",
+							Command: []string{
+								"sh",
+								"-c",
+								"sysctl -w net.core.somaxconn=65535",
+							},
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							SecurityContext: &corev1.SecurityContext{
+								Privileged:   &setSysctlPrivileged,
+								RunAsNonRoot: &setSysctlRunAsNonRoot,
+								RunAsUser:    &setSysctlRunUser,
+							},
+						},
 					},
 					Containers: []corev1.Container{
 						{
@@ -473,6 +562,10 @@ func generateSentinelDeployment(rf *redisfailoverv1.RedisFailover, labels map[st
 								{
 									Name:      "sentinel-config-writable",
 									MountPath: "/redis",
+								},
+								{
+									Name:      redisHostTimeVolumeName,
+									MountPath: "/etc/localtime",
 								},
 							},
 							Command: sentinelCommand,
@@ -520,6 +613,14 @@ func generateSentinelDeployment(rf *redisfailoverv1.RedisFailover, labels map[st
 							Name: "sentinel-config-writable",
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: redisHostTimeVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/etc/localtime",
+								},
 							},
 						},
 					},
@@ -604,7 +705,6 @@ func createRedisExporterContainer(rf *redisfailoverv1.RedisFailover) corev1.Cont
 				},
 			},
 		})
-
 	}
 
 	return container
@@ -730,6 +830,10 @@ func getRedisVolumeMounts(rf *redisfailoverv1.RedisFailover) []corev1.VolumeMoun
 			Name:      getRedisDataVolumeName(rf),
 			MountPath: "/data",
 		},
+		{
+			Name:      redisHostTimeVolumeName,
+			MountPath: "/etc/localtime",
+		},
 	}
 
 	return volumeMounts
@@ -774,6 +878,14 @@ func getRedisVolumes(rf *redisfailoverv1.RedisFailover) []corev1.Volume {
 				},
 			},
 		},
+		{
+			Name: redisHostTimeVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/etc/localtime",
+				},
+			},
+		},
 	}
 
 	dataVolume := getRedisDataVolume(rf)
@@ -795,6 +907,16 @@ func getRedisDataVolume(rf *redisfailoverv1.RedisFailover) *corev1.Volume {
 			Name: redisStorageVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				EmptyDir: rf.Spec.Redis.Storage.EmptyDir,
+			},
+		}
+	case rf.Spec.Redis.HostPath != "":
+		// 支持指定数据挂载本地路径
+		return &corev1.Volume{
+			Name: redisStorageVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: rf.Spec.Redis.HostPath,
+				},
 			},
 		}
 	default:

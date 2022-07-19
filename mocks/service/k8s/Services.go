@@ -694,6 +694,11 @@ func (_m *Services) ListPods(namespace string) (*v1.PodList, error) {
 	return r0, r1
 }
 
+// UpdatePodLabel provides a mock function with given fields: namespace, podName, labels
+func (_m *Services) UpdatePodLabels(namespace, podName string, labels map[string]string) error {
+	return nil
+}
+
 // ListRedisFailovers provides a mock function with given fields: ctx, namespace, opts
 func (_m *Services) ListRedisFailovers(ctx context.Context, namespace string, opts metav1.ListOptions) (*redisfailoverv1.RedisFailoverList, error) {
 	ret := _m.Called(ctx, namespace, opts)

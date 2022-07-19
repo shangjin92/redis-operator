@@ -56,8 +56,8 @@ func (_m *RedisFailoverClient) EnsureRedisReadinessConfigMap(rFailover *v1.Redis
 	return r0
 }
 
-// EnsureRedisService provides a mock function with given fields: rFailover, labels, ownerRefs
-func (_m *RedisFailoverClient) EnsureRedisService(rFailover *v1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error {
+// EnsureRedisExporterService provides a mock function with given fields: rFailover, labels, ownerRefs
+func (_m *RedisFailoverClient) EnsureRedisExporterService(rFailover *v1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error {
 	ret := _m.Called(rFailover, labels, ownerRefs)
 
 	var r0 error

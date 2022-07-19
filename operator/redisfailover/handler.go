@@ -82,6 +82,8 @@ func (r *RedisFailoverHandler) Handle(_ context.Context, obj runtime.Object) err
 	}
 
 	r.mClient.SetClusterOK(rf.Namespace, rf.Name)
+
+	r.logger.Debug("Will reconcile redis operator in again 10 seconds.")
 	return nil
 }
 

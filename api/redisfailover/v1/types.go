@@ -60,6 +60,7 @@ type RedisSettings struct {
 	PriorityClassName             string                        `json:"priorityClassName,omitempty"`
 	ServiceAccountName            string                        `json:"serviceAccountName,omitempty"`
 	TerminationGracePeriodSeconds int64                         `json:"terminationGracePeriod,omitempty"`
+	HostPath                      string                        `json:"hostPath,omitempty"`
 }
 
 // SentinelSettings defines the specification of the sentinel cluster

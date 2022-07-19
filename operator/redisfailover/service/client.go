@@ -17,11 +17,12 @@ type RedisFailoverClient interface {
 	EnsureSentinelConfigMap(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureSentinelDeployment(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureRedisStatefulset(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
-	EnsureRedisService(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
+	EnsureRedisExporterService(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureRedisShutdownConfigMap(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureRedisReadinessConfigMap(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureRedisConfigMap(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 	EnsureNotPresentRedisService(rFailover *redisfailoverv1.RedisFailover) error
+	EnsureRedisMasterService(rFailover *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error
 }
 
 // RedisFailoverKubeClient implements the required methods to talk with kubernetes
@@ -43,6 +44,23 @@ func generateSelectorLabels(component, name string) map[string]string {
 		"app.kubernetes.io/name":      name,
 		"app.kubernetes.io/component": component,
 		"app.kubernetes.io/part-of":   appLabel,
+	}
+}
+
+// 初始化的默认Role配置成 Slave, 之后再通过Operator来更新Label
+func generateRedisDefaultRoleLabel() map[string]string {
+	return generateRedisSlaveRoleLabel()
+}
+
+func generateRedisMasterRoleLabel() map[string]string {
+	return map[string]string{
+		redisRoleLabelKey: redisRoleLabelMaster,
+	}
+}
+
+func generateRedisSlaveRoleLabel() map[string]string {
+	return map[string]string{
+		redisRoleLabelKey: redisRoleLabelSlave,
 	}
 }
 
@@ -107,9 +125,15 @@ func (r *RedisFailoverKubeClient) EnsureRedisReadinessConfigMap(rf *redisfailove
 	return r.K8SService.CreateOrUpdateConfigMap(rf.Namespace, cm)
 }
 
-// EnsureRedisService makes sure the redis statefulset exists
-func (r *RedisFailoverKubeClient) EnsureRedisService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error {
-	svc := generateRedisService(rf, labels, ownerRefs)
+// EnsureRedisExporterService makes sure the redis statefulset exists
+func (r *RedisFailoverKubeClient) EnsureRedisExporterService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error {
+	svc := generateRedisExporterService(rf, labels, ownerRefs)
+	return r.K8SService.CreateIfNotExistsService(rf.Namespace, svc)
+}
+
+// EnsureRedisMasterService makes sure the redis master pod exists
+func (r *RedisFailoverKubeClient) EnsureRedisMasterService(rf *redisfailoverv1.RedisFailover, labels map[string]string, ownerRefs []metav1.OwnerReference) error {
+	svc := generateRedisMasterService(rf, labels, ownerRefs)
 	return r.K8SService.CreateIfNotExistsService(rf.Namespace, svc)
 }
 

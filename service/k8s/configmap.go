@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"context"
-
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -68,6 +67,15 @@ func (p *ConfigMapService) CreateOrUpdateConfigMap(namespace string, configMap *
 			return p.CreateConfigMap(namespace, configMap)
 		}
 		return err
+	}
+
+	// 如果ConfigMap Value没有变化， 则也不需要更新, 其他的变更操作通过人工Edit ConfigMap来修正
+	for storedKey, storedValue := range storedConfigMap.Data {
+		if value, ok := configMap.Data[storedKey]; ok {
+			if storedValue == value {
+				return nil
+			}
+		}
 	}
 
 	// Already exists, need to Update.

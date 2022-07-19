@@ -2,6 +2,8 @@ package redisfailover
 
 import (
 	"context"
+	"github.com/spotahome/kooper/v2/controller/leaderelection"
+	"k8s.io/client-go/kubernetes"
 	"time"
 
 	"github.com/spotahome/kooper/v2/controller"
@@ -19,13 +21,17 @@ import (
 )
 
 const (
-	resync       = 30 * time.Second
+	//resync       = 30 * time.Second
+	resync       = 10 * time.Second
 	operatorName = "redis-operator"
+
+	leaderElectionKey = "leader-election-redis-operator"
 )
 
 // New will create an operator that is responsible of managing all the required stuff
 // to create redis failovers.
-func New(cfg Config, k8sService k8s.Services, redisClient redis.Client, kooperMetricsRecorder metrics.Recorder, logger log.Logger) (controller.Controller, error) {
+func New(cfg Config, k8sService k8s.Services, redisClient redis.Client, kooperMetricsRecorder metrics.Recorder,
+	logger log.Logger, kubecli kubernetes.Interface) (controller.Controller, error) {
 	// Create internal services.
 	rfService := rfservice.NewRedisFailoverKubeClient(k8sService, logger)
 	rfChecker := rfservice.NewRedisFailoverChecker(k8sService, redisClient, logger)
@@ -35,15 +41,28 @@ func New(cfg Config, k8sService k8s.Services, redisClient redis.Client, kooperMe
 	rfHandler := NewRedisFailoverHandler(cfg, rfService, rfChecker, rfHealer, k8sService, kooperMetricsRecorder, logger)
 	rfRetriever := NewRedisFailoverRetriever(k8sService)
 
-	// Create our controller.
-	return controller.New(&controller.Config{
+	kooperlogger := kooperlogger{Logger: logger.WithField("operator", "redisfailover")}
+
+	controllerCfg := controller.Config{
 		Handler:         rfHandler,
 		Retriever:       rfRetriever,
 		MetricsRecorder: kooperMetricsRecorder,
-		Logger:          kooperlogger{Logger: logger.WithField("operator", "redisfailover")},
+		Logger:          kooperlogger,
 		Name:            "redisfailover",
 		ResyncInterval:  resync,
-	})
+	}
+
+	if cfg.EnableLeaderElection {
+		// Leader election service.
+		lesvc, err := leaderelection.NewDefault(leaderElectionKey, cfg.OperatorNameSpace, kubecli, kooperlogger)
+		if err != nil {
+			return nil, err
+		}
+		controllerCfg.LeaderElector = lesvc
+	}
+
+	// Create our controller.
+	return controller.New(&controllerCfg)
 }
 
 func NewRedisFailoverRetriever(cli k8s.Services) controller.Retriever {

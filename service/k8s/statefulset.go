@@ -85,7 +85,8 @@ func (s *StatefulSetService) UpdateStatefulSet(namespace string, statefulSet *ap
 
 // CreateOrUpdateStatefulSet will update the statefulset or create it if does not exist
 func (s *StatefulSetService) CreateOrUpdateStatefulSet(namespace string, statefulSet *appsv1.StatefulSet) error {
-	storedStatefulSet, err := s.GetStatefulSet(namespace, statefulSet.Name)
+	//storedStatefulSet, err := s.GetStatefulSet(namespace, statefulSet.Name)
+	_, err := s.GetStatefulSet(namespace, statefulSet.Name)
 	if err != nil {
 		// If no resource we need to create.
 		if errors.IsNotFound(err) {
@@ -94,12 +95,15 @@ func (s *StatefulSetService) CreateOrUpdateStatefulSet(namespace string, statefu
 		return err
 	}
 
+	// 先不支持通过Operator更新, 避免过于频繁调用ApiServer
+	return nil
+
 	// Already exists, need to Update.
 	// Set the correct resource version to ensure we are on the latest version. This way the only valid
 	// namespace is our spec(https://github.com/kubernetes/community/blob/master/contributors/devel/api-conventions.md#concurrency-control-and-consistency),
 	// we will replace the current namespace state.
-	statefulSet.ResourceVersion = storedStatefulSet.ResourceVersion
-	return s.UpdateStatefulSet(namespace, statefulSet)
+	//statefulSet.ResourceVersion = storedStatefulSet.ResourceVersion
+	//return s.UpdateStatefulSet(namespace, statefulSet)
 }
 
 // DeleteStatefulSet will delete the statefulset

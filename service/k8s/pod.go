@@ -2,10 +2,11 @@ package k8s
 
 import (
 	"context"
-
+	"encoding/json"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/spotahome/redis-operator/log"
@@ -19,6 +20,7 @@ type Pod interface {
 	CreateOrUpdatePod(namespace string, pod *corev1.Pod) error
 	DeletePod(namespace string, name string) error
 	ListPods(namespace string) (*corev1.PodList, error)
+	UpdatePodLabels(namespace, podName string, labels map[string]string) error
 }
 
 // PodService is the pod service implementation using API calls to kubernetes.
@@ -84,4 +86,33 @@ func (p *PodService) DeletePod(namespace string, name string) error {
 
 func (p *PodService) ListPods(namespace string) (*corev1.PodList, error) {
 	return p.kubeClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
+}
+
+//PatchStringValue specifies a patch operation for a string.
+type PatchStringValue struct {
+	Op    string      `json:"op"`
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
+
+func (p *PodService) UpdatePodLabels(namespace, podName string, labels map[string]string) error {
+	p.logger.Infof("Update pod label, namespace: %s, pod name: %s, labels: %v", namespace, podName, labels)
+
+	var payloads []interface{}
+	for labelKey, labelValue := range labels {
+		// labelPatch := fmt.Sprintf(`[{"op":"replace","path":"/metadata/labels/%s","value":"%s" }]`, labelKey, labelValue)
+		payload := PatchStringValue{
+			Op:    "replace",
+			Path:  "/metadata/labels/" + labelKey,
+			Value: labelValue,
+		}
+		payloads = append(payloads, payload)
+	}
+	payloadBytes, _ := json.Marshal(payloads)
+
+	_, err := p.kubeClient.CoreV1().Pods(namespace).Patch(context.TODO(), podName, types.JSONPatchType, payloadBytes, metav1.PatchOptions{})
+	if err != nil {
+		p.logger.Errorf("Update pod labels failed, namespace: %s, pod name: %s, error: %v", namespace, podName, err)
+	}
+	return err
 }

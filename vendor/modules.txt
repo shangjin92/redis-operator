@@ -106,6 +106,7 @@ github.com/spf13/pflag
 github.com/spotahome/kooper/v2/controller
 github.com/spotahome/kooper/v2/controller/leaderelection
 github.com/spotahome/kooper/v2/log
+github.com/spotahome/kooper/v2/log/logrus
 github.com/spotahome/kooper/v2/metrics/prometheus
 # github.com/stretchr/objx v0.3.0
 ## explicit; go 1.12

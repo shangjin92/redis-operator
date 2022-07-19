@@ -14,15 +14,27 @@ const (
 )
 
 const (
-	baseName               = "rf"
-	sentinelName           = "s"
+	baseName = "rf"
+	//sentinelName           = "s"
+	sentinelName           = "sentinel"
 	sentinelRoleName       = "sentinel"
 	sentinelConfigFileName = "sentinel.conf"
 	redisConfigFileName    = "redis.conf"
-	redisName              = "r"
-	redisShutdownName      = "r-s"
-	redisReadinessName     = "r-readiness"
-	redisRoleName          = "redis"
-	appLabel               = "redis-failover"
-	hostnameTopologyKey    = "kubernetes.io/hostname"
+	//redisName              = "r"
+	redisName         = "redis"
+	redisMasterName   = "redis-master"
+	redisExporterName = "redis-exporter"
+	//redisShutdownName   = "r-s"
+	redisShutdownName = "redis-shutdown"
+	//redisReadinessName  = "r-readiness"
+	redisReadinessName  = "redis-readiness"
+	redisRoleName       = "redis"
+	appLabel            = "redis-failover"
+	hostnameTopologyKey = "kubernetes.io/hostname"
+)
+
+const (
+	redisRoleLabelKey    = "redisfailovers-role"
+	redisRoleLabelMaster = "master"
+	redisRoleLabelSlave  = "slave"
 )

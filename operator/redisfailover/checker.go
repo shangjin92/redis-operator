@@ -100,11 +100,11 @@ func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) e
 	// Sentinel has not death nodes
 	// Sentinel knows the correct slave number
 	if err := r.rfChecker.CheckRedisNumber(rf); err != nil {
-		r.logger.Debug("Number of redis mismatch, this could be for a change on the statefulset")
+		r.logger.Error("Number of redis mismatch, this could be for a change on the statefulset")
 		return nil
 	}
 	if err := r.rfChecker.CheckSentinelNumber(rf); err != nil {
-		r.logger.Debug("Number of sentinel mismatch, this could be for a change on the deployment")
+		r.logger.Error("Number of sentinel mismatch, this could be for a change on the deployment")
 		return nil
 	}
 
@@ -129,20 +129,20 @@ func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) e
 			return err2
 		}
 		if minTime > timeToPrepare {
-			r.logger.Debugf("time %.f more than expected. Not even one master, fixing...", minTime.Round(time.Second).Seconds())
+			r.logger.Infof("time %.f more than expected. Not even one master, fixing...", minTime.Round(time.Second).Seconds())
 			// We can consider there's an error
 			if err2 := r.rfHealer.SetOldestAsMaster(rf); err2 != nil {
 				return err2
 			}
 		} else {
 			// We'll wait until failover is done
-			r.logger.Debug("No master found, wait until failover")
+			r.logger.Info("No master found, wait until failover")
 			return nil
 		}
 	case 1:
 		break
 	default:
-		return errors.New("More than one master, fix manually")
+		return errors.New("more than one master, fix manually")
 	}
 
 	master, err := r.rfChecker.GetMasterIP(rf)
@@ -150,7 +150,7 @@ func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) e
 		return err
 	}
 	if err2 := r.rfChecker.CheckAllSlavesFromMaster(master, rf); err2 != nil {
-		r.logger.Debug("Not all slaves have the same master")
+		r.logger.Errorf("Not all slaves have the same master, master ip: %s", master)
 		if err3 := r.rfHealer.SetMasterOnAll(master, rf); err3 != nil {
 			return err3
 		}
@@ -171,8 +171,9 @@ func (r *RedisFailoverHandler) CheckAndHeal(rf *redisfailoverv1.RedisFailover) e
 	}
 	for _, sip := range sentinels {
 		if err := r.rfChecker.CheckSentinelMonitor(sip, master); err != nil {
-			r.logger.Debug("Sentinel is not monitoring the correct master")
+			r.logger.Errorf("Sentinel is not monitoring the correct master, sentinel ip: %s, master ip: %s", sip, master)
 			if err := r.rfHealer.NewSentinelMonitor(sip, master, rf); err != nil {
+				r.logger.Error("Make sentinel monitor master failed, sentinel ip: %s, master: %s, error: %v", sip, master, err)
 				return err
 			}
 		}
@@ -202,7 +203,7 @@ func (r *RedisFailoverHandler) checkAndHealBootstrapMode(rf *redisfailoverv1.Red
 
 	if rf.SentinelsAllowed() {
 		if err := r.rfChecker.CheckSentinelNumber(rf); err != nil {
-			r.logger.Debug("Number of sentinel mismatch, this could be for a change on the deployment")
+			r.logger.Info("Number of sentinel mismatch, this could be for a change on the deployment")
 			return nil
 		}
 
@@ -212,7 +213,7 @@ func (r *RedisFailoverHandler) checkAndHealBootstrapMode(rf *redisfailoverv1.Red
 		}
 		for _, sip := range sentinels {
 			if err := r.rfChecker.CheckSentinelMonitor(sip, bootstrapSettings.Host, bootstrapSettings.Port); err != nil {
-				r.logger.Debug("Sentinel is not monitoring the correct master")
+				r.logger.Infof("Sentinel is not monitoring the correct master, sentinel ip: %s", sip)
 				if err := r.rfHealer.NewSentinelMonitorWithPort(sip, bootstrapSettings.Host, bootstrapSettings.Port, rf); err != nil {
 					return err
 				}
@@ -239,22 +240,25 @@ func (r *RedisFailoverHandler) applyRedisCustomConfig(rf *redisfailoverv1.RedisF
 func (r *RedisFailoverHandler) checkAndHealSentinels(rf *redisfailoverv1.RedisFailover, sentinels []string) error {
 	for _, sip := range sentinels {
 		if err := r.rfChecker.CheckSentinelNumberInMemory(sip, rf); err != nil {
-			r.logger.Debug("Sentinel has more sentinel in memory than spected")
+			r.logger.Errorf("Sentinel has more sentinel in memory than expected, sentinel ip: %s, error: %v", sip, err)
 			if err := r.rfHealer.RestoreSentinel(sip); err != nil {
+				r.logger.Errorf("Restore sentinel failed, sentinel ip: %s, error: %v", sip, err)
 				return err
 			}
 		}
 	}
 	for _, sip := range sentinels {
 		if err := r.rfChecker.CheckSentinelSlavesNumberInMemory(sip, rf); err != nil {
-			r.logger.Debug("Sentinel has more slaves in memory than spected")
+			r.logger.Errorf("Sentinel has more slaves in memory than expected, sentinel ip: %s, error: %v", sip, err)
 			if err := r.rfHealer.RestoreSentinel(sip); err != nil {
+				r.logger.Errorf("Restore sentinel failed, sentinel ip: %s, error: %v", sip, err)
 				return err
 			}
 		}
 	}
 	for _, sip := range sentinels {
 		if err := r.rfHealer.SetSentinelCustomConfig(sip, rf); err != nil {
+			r.logger.Errorf("Set sentinel config failed, sentinel ip: %s, error: %v", sip, err)
 			return err
 		}
 	}

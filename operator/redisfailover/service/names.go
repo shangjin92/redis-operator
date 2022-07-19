@@ -19,6 +19,16 @@ func GetRedisName(rf *redisfailoverv1.RedisFailover) string {
 	return generateName(redisName, rf.Name)
 }
 
+// GetRedisMasterName returns the name for redis master resources
+func GetRedisMasterName(rf *redisfailoverv1.RedisFailover) string {
+	return generateName(redisMasterName, rf.Name)
+}
+
+// GetRedisExporterName returns the name for redis resources
+func GetRedisExporterName(rf *redisfailoverv1.RedisFailover) string {
+	return generateName(redisExporterName, rf.Name)
+}
+
 // GetRedisShutdownName returns the name for redis resources
 func GetRedisShutdownName(rf *redisfailoverv1.RedisFailover) string {
 	return generateName(redisShutdownName, rf.Name)
@@ -35,5 +45,6 @@ func GetSentinelName(rf *redisfailoverv1.RedisFailover) string {
 }
 
 func generateName(typeName, metaName string) string {
-	return fmt.Sprintf("%s%s-%s", baseName, typeName, metaName)
+	//return fmt.Sprintf("%s%s-%s", baseName, typeName, metaName)
+	return fmt.Sprintf("%s-%s", typeName, metaName)
 }

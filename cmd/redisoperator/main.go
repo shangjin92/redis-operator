@@ -44,6 +44,10 @@ func New(logger log.Logger) Main {
 	}
 }
 
+func probeHandler(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "Hello World!")
+}
+
 // Run execs the program.
 func (m *Main) Run() error {
 	// Create signal channels.
@@ -71,6 +75,17 @@ func (m *Main) Run() error {
 		}
 	}()
 
+	// Serve probe.
+	go func() {
+		log.Infof("Listening on %s for probe exposure", m.flags.ProbeAddr)
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", probeHandler)
+		err := http.ListenAndServe(m.flags.ProbeAddr, mux)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
 	// Kubernetes clients.
 	stdclient, customclient, aeClientset, err := utils.CreateKubernetesClients(m.flags)
 	if err != nil {
@@ -84,7 +99,8 @@ func (m *Main) Run() error {
 	redisClient := redis.New()
 
 	// Create operator and run.
-	redisfailoverOperator, err := redisfailover.New(m.flags.ToRedisOperatorConfig(), k8sservice, redisClient, metricsRecorder, m.logger)
+	redisfailoverOperator, err := redisfailover.New(m.flags.ToRedisOperatorConfig(), k8sservice, redisClient,
+		metricsRecorder, m.logger, stdclient)
 	if err != nil {
 		return err
 	}

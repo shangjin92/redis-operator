@@ -74,9 +74,27 @@ func (r *RedisFailoverChecker) CheckSentinelNumber(rf *redisfailoverv1.RedisFail
 	return nil
 }
 
+func (r *RedisFailoverChecker) setMasterLabelIfNecessary(namespace string, pod corev1.Pod) error {
+	for labelKey, labelValue := range pod.ObjectMeta.Labels {
+		if labelKey == redisRoleLabelKey && labelValue == redisRoleLabelMaster {
+			return nil
+		}
+	}
+	return r.k8sService.UpdatePodLabels(namespace, pod.ObjectMeta.Name, generateRedisMasterRoleLabel())
+}
+
+func (r *RedisFailoverChecker) setSlaveLabelIfNecessary(namespace string, pod corev1.Pod) error {
+	for labelKey, labelValue := range pod.ObjectMeta.Labels {
+		if labelKey == redisRoleLabelKey && labelValue == redisRoleLabelSlave {
+			return nil
+		}
+	}
+	return r.k8sService.UpdatePodLabels(namespace, pod.ObjectMeta.Name, generateRedisSlaveRoleLabel())
+}
+
 // CheckAllSlavesFromMaster controlls that all slaves have the same master (the real one)
 func (r *RedisFailoverChecker) CheckAllSlavesFromMaster(master string, rf *redisfailoverv1.RedisFailover) error {
-	rips, err := r.GetRedisesIPs(rf)
+	rps, err := r.k8sService.GetStatefulSetPods(rf.Namespace, GetRedisName(rf))
 	if err != nil {
 		return err
 	}
@@ -86,13 +104,27 @@ func (r *RedisFailoverChecker) CheckAllSlavesFromMaster(master string, rf *redis
 		return err
 	}
 
-	for _, rip := range rips {
-		slave, err := r.redisClient.GetSlaveOf(rip, password)
+	for _, rp := range rps.Items {
+		// 每次校验主备的时候，同步校验Pod Label是否正确
+		if rp.Status.PodIP == master {
+			err = r.setMasterLabelIfNecessary(rf.Namespace, rp)
+			if err != nil {
+				return err
+			}
+		} else {
+			err = r.setSlaveLabelIfNecessary(rf.Namespace, rp)
+			if err != nil {
+				return err
+			}
+		}
+
+		slave, err := r.redisClient.GetSlaveOf(rp.Status.PodIP, password)
 		if err != nil {
+			r.logger.Errorf("Redis Pod is not running, maybe this node is not ready, pod ip: %s", rp.Status.PodIP)
 			return err
 		}
 		if slave != "" && slave != master {
-			return fmt.Errorf("slave %s don't have the master %s, has %s", rip, master, slave)
+			return fmt.Errorf("slave %s don't have the master %s, has %s", rp.Status.PodIP, master, slave)
 		}
 	}
 	return nil
@@ -104,7 +136,8 @@ func (r *RedisFailoverChecker) CheckSentinelNumberInMemory(sentinel string, rf *
 	if err != nil {
 		return err
 	} else if nSentinels != rf.Spec.Sentinel.Replicas {
-		return errors.New("sentinels in memory mismatch")
+		return errors.New(fmt.Sprintf("sentinels in memory mismatch, current sentinel count: %d, excepted sentinel replica: %d",
+			nSentinels, rf.Spec.Sentinel.Replicas))
 	}
 	return nil
 }
@@ -115,7 +148,8 @@ func (r *RedisFailoverChecker) CheckSentinelSlavesNumberInMemory(sentinel string
 	if err != nil {
 		return err
 	} else if nSlaves != rf.Spec.Redis.Replicas-1 {
-		return errors.New("redis slaves in sentinel memory mismatch")
+		return errors.New(fmt.Sprintf("redis slaves in sentinel memory mismatch, current slave count: %d, excepted redis replica: %d",
+			nSlaves, rf.Spec.Redis.Replicas-1))
 	}
 	return nil
 }
@@ -153,7 +187,10 @@ func (r *RedisFailoverChecker) GetMasterIP(rf *redisfailoverv1.RedisFailover) (s
 	for _, rip := range rips {
 		master, err := r.redisClient.IsMaster(rip, password)
 		if err != nil {
-			return "", err
+			// 暂不处理异常, 考虑会存在节点宕机不可用, 导致Redis实例无法访问的场景
+			r.logger.Errorf("Redis Pod is not running, maybe this node is not ready, pod ip: %s", rip)
+			continue
+			//return "", err
 		}
 		if master {
 			masters = append(masters, rip)
@@ -180,9 +217,12 @@ func (r *RedisFailoverChecker) GetNumberMasters(rf *redisfailoverv1.RedisFailove
 	}
 
 	for _, rip := range rips {
-		master, err := r.redisClient.IsMaster(rip, password)
+		master, _ := r.redisClient.IsMaster(rip, password)
 		if err != nil {
-			return nMasters, err
+			// 暂不处理异常, 考虑会存在节点宕机不可用, 导致Redis实例无法访问的场景
+			r.logger.Errorf("Redis Pod is not running, maybe this node is not ready, pod ip: %s", rip)
+			continue
+			//return nMasters, err
 		}
 		if master {
 			nMasters++
