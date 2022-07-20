@@ -167,12 +167,12 @@ func (r *RedisFailoverHealer) SetMasterOnAll(masterIP string, rf *redisfailoverv
 				return err
 			}
 		} else {
+			r.logger.Infof("Making pod %s slave of %s", pod.Name, masterIP)
 			err = r.setSlaveLabelIfNecessary(rf.Namespace, pod)
 			if err != nil {
 				return err
 			}
 
-			r.logger.Infof("Making pod %s slave of %s", pod.Name, masterIP)
 			if err := r.redisClient.MakeSlaveOf(pod.Status.PodIP, masterIP, password); err != nil {
 				r.logger.Errorf("Make slave failed, slave ip: %s, master ip: %s, error: %v", pod.Status.PodIP, masterIP, err)
 			}
